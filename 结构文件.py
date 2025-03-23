@@ -17,8 +17,10 @@ BASE_STRUCTURE = "FactoryAPI.shape()"
 STRUCTURE_DIR = Path(INPUT_FILE).stem
 
 SPECIAL_CHARS = {
-    '~': "Predicates.controller(blocks(definition.getBlock()))",
-    ' ': "Predicates.any()"
+    '~': {
+        'condition': "Predicates.controller(definition.getBlock('{}'))",
+        'keywords': ['gtceu:annihilate_generator[facing=south,server_tick=false,upwards_facing=north]']
+    }
 }
 COMPLEX_CONDITIONS = {
     "A": {
@@ -46,11 +48,8 @@ COMPLEX_CONDITIONS = {
 # ----------------------
 class SchematicConverter:
     def __init__(self):
-        # 创建两级目录结构
         self.output_dir = Path(OUTPUT_ROOT) / STRUCTURE_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # 初始化其他成员变量
         self.palette = {}
         self.block_data = []
         self.length = 0
@@ -58,6 +57,7 @@ class SchematicConverter:
         self.auto_char_map = {}
         self.used_chars = set(SPECIAL_CHARS.keys())
         self.char_generator = self.create_char_generator()
+        self.layers = []  # 显式初始化实例变量
 
     def create_char_generator(self):
         """字符生成序列（跳过已使用字符）"""
@@ -98,9 +98,27 @@ class SchematicConverter:
 
         entries = re.findall(r'"([^"]+)": (\d+)\s*', palette_section.group(1))
         for block_name, block_id in entries:
-            # 处理空气方块
+            # 强制处理空气方块
             if block_name == "minecraft:air":
                 self._handle_air_block(block_id)
+                continue
+            # 新增逻辑：优先匹配SPECIAL_CHARS的关键词
+            matched_special = False
+            for char, config in SPECIAL_CHARS.items():
+                if any(keyword in block_name for keyword in config['keywords']):
+                    self.palette[int(block_id)] = char
+                    self.auto_char_map[block_name] = char
+                    self.used_chars.add(char)
+                    matched_special = True
+                    break
+            if matched_special:
+                continue
+
+            # 自动识别控制器（根据名称特征）
+            if "controller" in block_name.lower() or "control_toroid" in block_name:
+                self.palette[int(block_id)] = '~'
+                self.auto_char_map[block_name] = '~'
+                self.used_chars.add('~')
                 continue
 
             # 已映射的方块跳过
@@ -138,19 +156,19 @@ class SchematicConverter:
             raise ValueError("BlockData包含无效数字")
 
     def generate_layers(self):
-        """生成分层结构数据"""
-        layers = []
-        for z in range(self.height):
+        """生成分层结构数据（调整后的顺序）"""
+        self.layers = []  # 初始化实例变量
+        for y in range(self.length):
             layer = []
-            for y in range(self.length):
+            for z in range(self.height):
                 row = []
                 for x in range(self.length):
-                    index = z * self.length**2 + y * self.length + x
+                    index = z * self.length ** 2 + y * self.length + x
                     block_id = self.block_data[index]
                     row.append(self.palette.get(block_id, '?'))
                 layer.append("".join(row))
-            layers.append(layer)
-        return layers
+            self.layers.append(layer)
+        return self.layers  # 返回实例变量
 
     def generate_java_code(self, layers):
         """生成Java分层类文件"""
@@ -181,47 +199,18 @@ class SchematicConverter:
             output_file.write_text("\n".join(code), encoding="utf-8")
             print(f"生成结构类文件: {output_file}")
 
-    def generate_aisle_code_snippet(self, total_layers):
-        """生成结构调用代码（精确格式）"""
-        lines = [
-            "// 结构调用代码片段 - 请粘贴到对应位置",
-            f"{BASE_STRUCTURE}"
-        ]
-
-        current_part = 1
-        part_layers = []
-
-        for layer_num in range(1, total_layers + 1):
-            # 计算当前属于哪个Part
-            part_num = (layer_num - 1) // LAYERS_PER_FILE + 1
-
-            # 当Part变化时添加换行
-            if part_num != current_part:
-                lines.append("")
-                current_part = part_num
-
-            class_name = f"{CLASS_PREFIX}_Part{part_num}"
-            layer_id = f"LAYER_{layer_num:03}"
-            lines.append(f"    .aisle({class_name}.{layer_id})")
-
-        # 添加结尾分号
-        lines[-1] += ";"
-
-        output_file = self.output_dir / "StructureAisleCalls.java"
-        output_file.write_text("\n".join(lines))
-        print(f"生成调用代码: {output_file}")
-
-    def generate_pattern_code_snippet(self, layers):
+    def generate_pattern_code_snippet(self):
         """生成匹配条件代码"""
         unique_chars = set()
-        for layer in layers:
+        for layer in self.layers:  # 使用实例变量
             for row in layer:
                 unique_chars.update(row)
 
         where_lines = []
         for char in sorted(unique_chars, key=lambda x: (x not in SPECIAL_CHARS, x)):
             if char in SPECIAL_CHARS:
-                where_lines.append(f".where('{char}', {SPECIAL_CHARS[char]})")
+                # 修正为正确的条件引用格式
+                where_lines.append(f".where('{char}', {SPECIAL_CHARS[char]['condition']})")
                 continue
 
             if char in COMPLEX_CONDITIONS:
@@ -235,23 +224,23 @@ class SchematicConverter:
                     [f"Predicates.blocks(GetRegistries.getBlock('{b}'))"
                      for b in matched_blocks]
                 )
-                if len(char) > 1:
-                    conditions = f"Predicates.matches({conditions})"
                 where_lines.append(f".where('{char}', {conditions})")
             else:
                 print(f"警告: 字符 '{char}' 未找到对应方块定义")
 
+        # 确保使用 self.layers 生成 aisle
         pattern_code = [
             f"public static final MultiblockShape PATTERN = {BASE_STRUCTURE}",
-            *["    .aisle(\"{}\")".format(row) for layer in layers for row in layer],
+            *["    .aisle(\"{}\")".format(row) for layer in self.layers for row in layer],
             "    .where(' ', Predicates.any())",
             *["    " + line for line in where_lines],
             "    .build();"
         ]
 
         output_file = self.output_dir / "PatternConditions.java"
-        output_file.write_text("\n".join(pattern_code))
+        output_file.write_text("\n".join(pattern_code), encoding="utf-8")
         print(f"生成匹配条件: {output_file}")
+        condition = SPECIAL_CHARS[char]['condition'].format(*SPECIAL_CHARS[char]['keywords'])
 
     def _build_complex_condition(self, char, config, indent=4):
         """构建复杂条件表达式"""
@@ -291,16 +280,13 @@ if __name__ == "__main__":
         converter.load_schematic(INPUT_FILE)
 
         print("生成层级数据...")
-        layers = converter.generate_layers()
+        converter.generate_layers()  # 必须调用以初始化self.layers
 
         print("生成Java结构类...")
-        converter.generate_java_code(layers)
-
-        print("生成结构调用代码...")
-        converter.generate_aisle_code_snippet(len(layers))
+        converter.generate_java_code(converter.layers)
 
         print("生成匹配条件代码...")
-        converter.generate_pattern_code_snippet(layers)
+        converter.generate_pattern_code_snippet()  # 移除参数
 
         print("生成完成！文件输出至: {}".format(
             Path(OUTPUT_ROOT) / STRUCTURE_DIR
