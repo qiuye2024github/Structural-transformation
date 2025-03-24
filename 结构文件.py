@@ -19,12 +19,15 @@ STRUCTURE_DIR = Path(INPUT_FILE).stem
 SPECIAL_CHARS = {
     '~': {
         'condition': "Predicates.controller(definition.getBlock('{}'))",
-        'keywords': ['gtceu:annihilate_generator[facing=south,server_tick=false,upwards_facing=north]']
+        'keywords': [# 新增通用识别关键词
+            'gtl_extend:black_hole_matter_decompressor'
+        ]
     }
 }
 COMPLEX_CONDITIONS = {
     "A": {
-        "base": "Predicates.blocks(GetRegistries.getBlock('gtceu:high_temperature_smelting_casing'))",
+        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",  # 可配置的模板
+        "keywords": ["gtceu:high_power_casing"],  # 匹配关键词
         "chain": [
             ".setMinGlobalLimited(10)",
             {
@@ -91,51 +94,74 @@ class SchematicConverter:
             raise ValueError(f"数据长度不匹配！预期: {expected_size}, 实际: {len(self.block_data)}")
 
     def parse_palette(self, content):
-        """解析调色板并生成字符映射"""
+        """解析调色板并生成字符映射（完整修复版）"""
         palette_section = re.search(r"Palette: {([^}]+)}", content, re.DOTALL)
         if not palette_section:
             raise ValueError("无法找到Palette定义")
 
-        entries = re.findall(r'"([^"]+)": (\d+)\s*', palette_section.group(1))
+        # 使用迭代器直接提取键值对
+        entries = []
+        pattern = re.compile(r'"\s*(.*?)\s*"\s*:\s*(\d+)')  # 允许键值周围的空格
+        for match in pattern.finditer(palette_section.group(1)):
+            block_name = match.group(1).replace('\\"', '"')  # 处理转义引号
+            block_id = int(match.group(2))
+            entries.append((block_name, block_id))
+
+        # 处理特殊方块
         for block_name, block_id in entries:
-            # 强制处理空气方块
+            # 空气方块处理
             if block_name == "minecraft:air":
                 self._handle_air_block(block_id)
                 continue
-            # 新增逻辑：优先匹配SPECIAL_CHARS的关键词
+
+            # 特殊字符匹配（基于配置的关键词）
             matched_special = False
             for char, config in SPECIAL_CHARS.items():
-                if any(keyword in block_name for keyword in config['keywords']):
-                    self.palette[int(block_id)] = char
-                    self.auto_char_map[block_name] = char
-                    self.used_chars.add(char)
-                    matched_special = True
-                    break
+                keywords = config.get('keywords', [])
+                for keyword in keywords:
+                    if keyword.lower() in block_name.lower():
+                        self.palette[block_id] = char
+                        self.auto_char_map[block_name] = char
+                        self.used_chars.add(char)
+                        print(f"识别到特殊方块 {block_name} -> {char} (关键词: {keyword})")
+                        matched_special = True
+                        break  # 匹配到一个关键词即退出循环
+                if matched_special:
+                    break  # 已匹配特殊字符，退出外层循环
             if matched_special:
+                continue  # 继续处理下一个方块
+
+            matched_complex = False
+            for char, config in COMPLEX_CONDITIONS.items():
+                keywords = config.get('keywords', [])
+                for keyword in keywords:
+                    if keyword.lower() in block_name.lower():
+                        self.palette[block_id] = char
+                        self.auto_char_map[block_name] = char
+                        self.used_chars.add(char)
+                        print(f"识别到复杂条件方块 {block_name} -> {char} (关键词: {keyword})")
+                        matched_complex = True
+                        break
+                if matched_complex:
+                    break
+            if matched_complex:
                 continue
 
-            # 自动识别控制器（根据名称特征）
-            if "controller" in block_name.lower() or "control_toroid" in block_name:
-                self.palette[int(block_id)] = '~'
-                self.auto_char_map[block_name] = '~'
-                self.used_chars.add('~')
-                continue
+            # 自动分配字符（增强版）
+            if block_name not in self.auto_char_map:
+                try:
+                    new_char = next(self.char_generator)
+                    while new_char in self.used_chars:
+                        new_char = next(self.char_generator)
+                    self.auto_char_map[block_name] = new_char
+                    self.used_chars.add(new_char)
+                except StopIteration:
+                    raise ValueError("字符资源耗尽，请减少唯一方块种类")
 
-            # 已映射的方块跳过
-            if block_name in self.auto_char_map:
-                continue
-
-            # 分配新字符
-            try:
-                assigned_char = next(self.char_generator)
-                while assigned_char in self.used_chars:
-                    assigned_char = next(self.char_generator)
-            except StopIteration:
-                raise ValueError("字符资源耗尽，无法分配更多唯一标识符")
-
-            self.auto_char_map[block_name] = assigned_char
-            self.palette[int(block_id)] = assigned_char
-            self.used_chars.add(assigned_char)
+            # 更新palette映射
+            assigned_char = self.auto_char_map[block_name]
+            self.palette[block_id] = assigned_char
+            print(f"映射 {block_name} (ID:{block_id}) -> {assigned_char}")
 
     def _handle_air_block(self, block_id):
         """特殊处理空气方块"""
@@ -144,20 +170,25 @@ class SchematicConverter:
         self.used_chars.add(' ')
 
     def decode_block_data(self, content):
-        """解析方块数据"""
+        """解析方块数据（添加校验）"""
         match = re.search(r"BlockData: bytes\(([^)]+)", content)
         if not match:
             raise ValueError("无法找到BlockData")
 
         byte_values = match.group(1).split(", ")
-        try:
-            self.block_data = [int(b) for b in byte_values]
-        except ValueError:
-            raise ValueError("BlockData包含无效数字")
+        self.block_data = []
+        for b in byte_values:
+            try:
+                block_id = int(b)
+                if block_id not in self.palette:
+                    raise ValueError(f"发现未映射的方块ID: {block_id}")
+                self.block_data.append(block_id)
+            except ValueError:
+                print(f"警告: 忽略无效的BlockData值: {b}")
 
     def generate_layers(self):
-        """生成分层结构数据（调整后的顺序）"""
-        self.layers = []  # 初始化实例变量
+        """生成分层结构数据（带调试信息）"""
+        self.layers = []
         for y in range(self.length):
             layer = []
             for z in range(self.height):
@@ -165,7 +196,10 @@ class SchematicConverter:
                 for x in range(self.length):
                     index = z * self.length ** 2 + y * self.length + x
                     block_id = self.block_data[index]
-                    row.append(self.palette.get(block_id, '?'))
+                    char = self.palette.get(block_id, '?')
+                    if char == '?':
+                        print(f"警告: 位置({x},{y},{z}) 发现未映射ID: {block_id}")
+                    row.append(char)
                 layer.append("".join(row))
             self.layers.append(layer)
         return self.layers  # 返回实例变量
@@ -202,38 +236,39 @@ class SchematicConverter:
     def generate_pattern_code_snippet(self):
         """生成匹配条件代码"""
         unique_chars = set()
-        for layer in self.layers:  # 使用实例变量
+        for layer in self.layers:
             for row in layer:
                 unique_chars.update(row)
 
         where_lines = []
         for char in sorted(unique_chars, key=lambda x: (x not in SPECIAL_CHARS, x)):
+            # 处理特殊字符（如~）
             if char in SPECIAL_CHARS:
-                # 修正为正确的条件引用格式
-                where_lines.append(f".where('{char}', {SPECIAL_CHARS[char]['condition']})")
-                continue
+                config = SPECIAL_CHARS[char]
+                # 填充占位符：将{}替换为第一个keyword
+                filled_condition = config['condition'].format(config['keywords'][0])
+                where_lines.append(f".where('{char}', {filled_condition})")
 
-            if char in COMPLEX_CONDITIONS:
-                condition = self._build_complex_condition(char, COMPLEX_CONDITIONS[char])
-                where_lines.append(f".where('{char}', {condition})")
-                continue
-
-            matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
-            if matched_blocks:
-                conditions = " | ".join(
-                    [f"Predicates.blocks(GetRegistries.getBlock('{b}'))"
-                     for b in matched_blocks]
-                )
-                where_lines.append(f".where('{char}', {conditions})")
-            else:
-                print(f"警告: 字符 '{char}' 未找到对应方块定义")
+            # 处理复杂条件（如A）
+            elif char in COMPLEX_CONDITIONS:
+                config = COMPLEX_CONDITIONS[char]
+                matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
+                if matched_blocks:
+                    # 填充占位符并构建条件链
+                    base_condition = config['condition'].format(matched_blocks[0])
+                    condition = self._build_complex_condition(char, {
+                        "condition": base_condition,
+                        "chain": config['chain']
+                    })
+                    where_lines.append(f".where('{char}', {condition})")
+            print(f"警告: 复杂条件字符 '{char}' 未找到对应方块")
 
         # 确保使用 self.layers 生成 aisle
         pattern_code = [
             f"public static final MultiblockShape PATTERN = {BASE_STRUCTURE}",
             *["    .aisle(\"{}\")".format(row) for layer in self.layers for row in layer],
-            "    .where(' ', Predicates.any())",
-            *["    " + line for line in where_lines],
+            "    .where(' ', Predicates.any())",  # 固定空格的where条件
+            *["    " + line.rstrip() + " \\" for line in where_lines],  # 添加换行连接符
             "    .build();"
         ]
 
@@ -248,26 +283,26 @@ class SchematicConverter:
         if isinstance(config, str):
             return config
 
-        condition_lines = [config['base']]
+        # 初始化基础条件
+        condition_lines = [config['condition']]
+
         for item in config.get('chain', []):
             if isinstance(item, dict) and 'or' in item:
+                # 处理OR条件
                 or_conditions = [
                     self._build_complex_condition(char, or_item, indent + 8)
                     for or_item in item['or']
                 ]
-                condition_lines.append(
-                    f".or(\n{' ' * (indent + 4)}" +
-                    f",\n{' ' * (indent + 4)}".join(or_conditions) +
-                    f"\n{space})"
-                )
+                or_block = ",\n".join([f"{' ' * (indent + 4)}{c}" for c in or_conditions])
+                condition_lines.append(f".or(\n{' ' * (indent + 4)}{or_block}\n{space})")
             else:
+                # 直接添加链式调用
                 condition_lines.append(f"{item}")
 
-        return '\n'.join([
+        return " \\\n".join([
             f"{condition_lines[0]}",
             *[f"{space}{line}" for line in condition_lines[1:]]
         ])
-
 
 
 # ----------------------
