@@ -6,11 +6,11 @@ from itertools import product
 # ----------------------
 # 配置区
 # ----------------------
-INPUT_FILE = "物质解压器.txt"
+INPUT_FILE = "牛牛机.txt"
 OUTPUT_ROOT = "multiblock"  # 固定第一层目录
-PACKAGE_NAME = "org.qiuyeqaq.gtl_extend.common.multiblock.structure.BlackHoleMatterDecompressor"
+PACKAGE_NAME = "org.qiuyeqaq.gtl_extend.common.multiblock.structure.Void_Pump"
 LAYERS_PER_FILE = 20
-CLASS_PREFIX = "BlackHoleMatterDecompressor"
+CLASS_PREFIX = "Void_Pump"
 BASE_STRUCTURE = "FactoryAPI.shape()"
 
 # 从输入文件名获取结构名称
@@ -18,18 +18,17 @@ STRUCTURE_DIR = Path(INPUT_FILE).stem
 
 SPECIAL_CHARS = {
     '~': {
-        'condition': "Predicates.controller(definition.getBlock('{}'))",
+        'condition': "Predicates.controller(blocks(definition.getBlock('{}'))",
         'keywords': [# 新增通用识别关键词
-            'gtl_extend:black_hole_matter_decompressor'
+            'minecraft:yellow_concrete'
         ]
     }
 }
 COMPLEX_CONDITIONS = {
     "A": {
-        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",  # 可配置的模板
-        "keywords": ["gtceu:high_power_casing"],  # 匹配关键词
-        "chain": [
-            ".setMinGlobalLimited(10)",
+        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",
+        "keywords": ["gtceu:high_power_casing"],
+        "chain": [  # 移除.setMinGlobalLimited(10)
             {
                 "or": [
                     "Predicates.abilities(PartAbility.EXPORT_ITEMS).setPreviewCount(1)",
@@ -45,7 +44,6 @@ COMPLEX_CONDITIONS = {
 }
 
 
-
 # ----------------------
 # 核心逻辑
 # ----------------------
@@ -55,10 +53,12 @@ class SchematicConverter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.palette = {}
         self.block_data = []
+        self.width = 0
         self.length = 0
         self.height = 0
         self.auto_char_map = {}
         self.used_chars = set(SPECIAL_CHARS.keys())
+        self.used_chars = {'A'}
         self.char_generator = self.create_char_generator()
         self.layers = []  # 显式初始化实例变量
 
@@ -78,9 +78,10 @@ class SchematicConverter:
         """加载并解析结构文件"""
         content = Path(file_path).read_text(encoding="utf-8")
 
-        # 解析尺寸
-        self.length = int(re.search(r"Length: (\d+)S", content).group(1))
-        self.height = int(re.search(r"Height: (\d+)S", content).group(1))
+        # 解析尺寸（修正部分）
+        self.width = int(re.search(r"Width: (\d+)S", content).group(1))  # 新增Width解析
+        self.length = int(re.search(r"Length: (\d+)S", content).group(1))  # 原Length解析
+        self.height = int(re.search(r"Height: (\d+)S", content).group(1))  # 原Height解析
 
         # 解析调色板
         self.parse_palette(content)
@@ -88,8 +89,8 @@ class SchematicConverter:
         # 解析块数据
         self.decode_block_data(content)
 
-        # 数据校验
-        expected_size = self.length ** 2 * self.height
+        # 数据校验（修正计算方式）
+        expected_size = self.width * self.length * self.height  # 正确体积计算
         if len(self.block_data) != expected_size:
             raise ValueError(f"数据长度不匹配！预期: {expected_size}, 实际: {len(self.block_data)}")
 
@@ -119,11 +120,11 @@ class SchematicConverter:
             for char, config in SPECIAL_CHARS.items():
                 keywords = config.get('keywords', [])
                 for keyword in keywords:
-                    if keyword.lower() in block_name.lower():
+                    if block_name.lower() == keyword.lower():
+                        filled_condition = config['condition'].format(keyword)  # 使用实际关键字填充
                         self.palette[block_id] = char
                         self.auto_char_map[block_name] = char
-                        self.used_chars.add(char)
-                        print(f"识别到特殊方块 {block_name} -> {char} (关键词: {keyword})")
+                        print(f"识别到特殊条件方块 {block_name} -> {char}")
                         matched_special = True
                         break  # 匹配到一个关键词即退出循环
                 if matched_special:
@@ -146,6 +147,12 @@ class SchematicConverter:
                     break
             if matched_complex:
                 continue
+
+            if block_name == "gtceu:tritanium_frame":
+                if 'B' not in self.used_chars:
+                    self.auto_char_map[block_name] = 'B'
+                    self.used_chars.add('B')
+                    print(f"强制分配 tritanium_frame -> B")
 
             # 自动分配字符（增强版）
             if block_name not in self.auto_char_map:
@@ -189,12 +196,15 @@ class SchematicConverter:
     def generate_layers(self):
         """生成分层结构数据（带调试信息）"""
         self.layers = []
-        for y in range(self.length):
+        for y in reversed(range(self.height)):  # y轴范围是height
             layer = []
-            for z in range(self.height):
+            for z in range(self.length):  # z轴范围是length
                 row = []
-                for x in range(self.length):
-                    index = z * self.length ** 2 + y * self.length + x
+                for x in range(self.width):  # x轴范围是width
+                    # 修正索引计算：按width(x)*length(z)*height(y)顺序
+                    index = y * self.width * self.length + z * self.width + x
+                    if index >= len(self.block_data):
+                        raise IndexError(f"索引超出范围: {index} (总长度: {len(self.block_data)})")
                     block_id = self.block_data[index]
                     char = self.palette.get(block_id, '?')
                     if char == '?':
@@ -234,75 +244,73 @@ class SchematicConverter:
             print(f"生成结构类文件: {output_file}")
 
     def generate_pattern_code_snippet(self):
-        """生成匹配条件代码"""
+        """生成匹配条件代码（去重并修复格式）"""
         unique_chars = set()
         for layer in self.layers:
             for row in layer:
                 unique_chars.update(row)
 
         where_lines = []
+        processed_chars = set()  # 记录已处理的字符
+
         for char in sorted(unique_chars, key=lambda x: (x not in SPECIAL_CHARS, x)):
-            # 处理特殊字符（如~）
+            if char in processed_chars:
+                continue  # 避免重复处理
+
             if char in SPECIAL_CHARS:
+                # 处理特殊字符（如~）
                 config = SPECIAL_CHARS[char]
-                # 填充占位符：将{}替换为第一个keyword
                 filled_condition = config['condition'].format(config['keywords'][0])
                 where_lines.append(f".where('{char}', {filled_condition})")
+                processed_chars.add(char)
 
-            # 处理复杂条件（如A）
             elif char in COMPLEX_CONDITIONS:
+                # 处理复杂条件（如A）
                 config = COMPLEX_CONDITIONS[char]
                 matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
                 if matched_blocks:
-                    # 填充占位符并构建条件链
                     base_condition = config['condition'].format(matched_blocks[0])
-                    condition = self._build_complex_condition(char, {
+                    complex_condition = self._build_complex_condition(char, {
                         "condition": base_condition,
                         "chain": config['chain']
                     })
-                    where_lines.append(f".where('{char}', {condition})")
-            print(f"警告: 复杂条件字符 '{char}' 未找到对应方块")
+                    where_lines.append(f".where('{char}', {complex_condition})")
+                    processed_chars.add(char)
 
-        # 确保使用 self.layers 生成 aisle
+            else:
+                # 处理普通字符（如B、C等）
+                matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
+                if matched_blocks:
+                    condition = f"Predicates.blocks(GetRegistries.getBlock('{matched_blocks[0]}'))"
+                    where_lines.append(f".where('{char}', {condition})")
+                    processed_chars.add(char)
+
+        # 生成最终代码（按正确顺序排列）
         pattern_code = [
             f"public static final MultiblockShape PATTERN = {BASE_STRUCTURE}",
             *["    .aisle(\"{}\")".format(row) for layer in self.layers for row in layer],
-            "    .where(' ', Predicates.any())",  # 固定空格的where条件
-            *["    " + line.rstrip() + " \\" for line in where_lines],  # 添加换行连接符
+            *where_lines,  # 直接插入已排序的条件
             "    .build();"
         ]
 
         output_file = self.output_dir / "PatternConditions.java"
         output_file.write_text("\n".join(pattern_code), encoding="utf-8")
         print(f"生成匹配条件: {output_file}")
-        condition = SPECIAL_CHARS[char]['condition'].format(*SPECIAL_CHARS[char]['keywords'])
 
     def _build_complex_condition(self, char, config, indent=4):
-        """构建复杂条件表达式"""
-        space = ' ' * indent
+        """修复链式条件缩进"""
         if isinstance(config, str):
-            return config
-
-        # 初始化基础条件
+            return config  # 直接返回字符串条件
+        space = ' ' * indent
         condition_lines = [config['condition']]
 
         for item in config.get('chain', []):
             if isinstance(item, dict) and 'or' in item:
-                # 处理OR条件
-                or_conditions = [
-                    self._build_complex_condition(char, or_item, indent + 8)
-                    for or_item in item['or']
-                ]
-                or_block = ",\n".join([f"{' ' * (indent + 4)}{c}" for c in or_conditions])
-                condition_lines.append(f".or(\n{' ' * (indent + 4)}{or_block}\n{space})")
-            else:
-                # 直接添加链式调用
-                condition_lines.append(f"{item}")
-
-        return " \\\n".join([
-            f"{condition_lines[0]}",
-            *[f"{space}{line}" for line in condition_lines[1:]]
-        ])
+                for or_item in item['or']:
+                    # 处理字符串或字典类型的条件项
+                    or_condition = self._build_complex_condition(char, or_item, indent + 4)
+                    condition_lines.append(f"{space}.or({or_condition})")
+        return '\n'.join(condition_lines)
 
 
 # ----------------------
