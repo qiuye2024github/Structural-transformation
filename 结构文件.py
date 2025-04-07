@@ -8,9 +8,9 @@ from itertools import product
 # ----------------------
 INPUT_FILE = "牛牛机.txt"
 OUTPUT_ROOT = "multiblock"  # 固定第一层目录
-PACKAGE_NAME = "org.qiuyeqaq.gtl_extend.common.multiblock.structure.Void_Pump"
+PACKAGE_NAME = "org.qiuyeqaq.gtl_extend.common.multiblock.structure.Cattle_cattle_machine"
 LAYERS_PER_FILE = 20
-CLASS_PREFIX = "Void_Pump"
+CLASS_PREFIX = "Cattle_cattle_machine"
 BASE_STRUCTURE = "FactoryAPI.shape()"
 
 # 从输入文件名获取结构名称
@@ -20,7 +20,7 @@ SPECIAL_CHARS = {
     '~': {
         'condition': "Predicates.controller(blocks(definition.getBlock('{}'))",
         'keywords': [# 新增通用识别关键词
-            'minecraft:yellow_concrete'
+            'gtl_extend:cattle_cattle_machine'
         ]
     }
 }
@@ -75,22 +75,19 @@ class SchematicConverter:
                 yield combo
 
     def load_schematic(self, file_path):
-        """加载并解析结构文件"""
         content = Path(file_path).read_text(encoding="utf-8")
 
-        # 解析尺寸（修正部分）
-        self.width = int(re.search(r"Width: (\d+)S", content).group(1))  # 新增Width解析
-        self.length = int(re.search(r"Length: (\d+)S", content).group(1))  # 原Length解析
-        self.height = int(re.search(r"Height: (\d+)S", content).group(1))  # 原Height解析
+        # 解析Width、Length、Height（修正正则表达式）
+        self.width = int(re.search(r"Width: (\d+)S", content).group(1))
+        self.length = int(re.search(r"Length: (\d+)S", content).group(1))
+        self.height = int(re.search(r"Height: (\d+)S", content).group(1))
 
-        # 解析调色板
+        # 解析调色板和块数据（原有逻辑不变）
         self.parse_palette(content)
-
-        # 解析块数据
         self.decode_block_data(content)
 
-        # 数据校验（修正计算方式）
-        expected_size = self.width * self.length * self.height  # 正确体积计算
+        # 数据校验：width * length * height = 块数据总量
+        expected_size = self.width * self.length * self.height
         if len(self.block_data) != expected_size:
             raise ValueError(f"数据长度不匹配！预期: {expected_size}, 实际: {len(self.block_data)}")
 
@@ -194,30 +191,30 @@ class SchematicConverter:
                 print(f"警告: 忽略无效的BlockData值: {b}")
 
     def generate_layers(self):
-        """生成分层结构数据（带调试信息）"""
         self.layers = []
-        for y in reversed(range(self.height)):  # y轴范围是height
+
+        # Z轴从小到大遍历（每个Z对应一个LAYER）
+        for z in range(self.length):
             layer = []
-            for z in range(self.length):  # z轴范围是length
+
+            # Y轴从下到上（y=0为最下层）
+            for y in range(self.height):
                 row = []
-                for x in range(self.width):  # x轴范围是width
-                    # 修正索引计算：按width(x)*length(z)*height(y)顺序
-                    index = y * self.width * self.length + z * self.width + x
-                    if index >= len(self.block_data):
-                        raise IndexError(f"索引超出范围: {index} (总长度: {len(self.block_data)})")
+
+                # X轴从左到右
+                for x in range(self.width):
+                    # 修正索引公式：y * (width * length) + z * width + x
+                    index = y * (self.width * self.length) + z * self.width + x
                     block_id = self.block_data[index]
-                    char = self.palette.get(block_id, '?')
-                    if char == '?':
-                        print(f"警告: 位置({x},{y},{z}) 发现未映射ID: {block_id}")
-                    row.append(char)
+                    row.append(self.palette.get(block_id, '?'))
                 layer.append("".join(row))
+
             self.layers.append(layer)
+
         return self.layers  # 返回实例变量
 
     def generate_java_code(self, layers):
-        """生成Java分层类文件"""
         total_files = (len(layers) + LAYERS_PER_FILE - 1) // LAYERS_PER_FILE
-
         for file_num in range(total_files):
             start = file_num * LAYERS_PER_FILE
             end = min((file_num + 1) * LAYERS_PER_FILE, len(layers))
@@ -225,18 +222,21 @@ class SchematicConverter:
 
             class_name = f"{CLASS_PREFIX}_Part{file_num + 1}"
             code = [
-                f"package {PACKAGE_NAME};",  # 保持原始包名
+                f"package {PACKAGE_NAME};",
                 "",
                 f"public class {class_name} {{",
                 ""
             ]
 
+            # 按层级顺序写入LAYER_001, LAYER_002...
             for i, layer in enumerate(file_layers, start + 1):
                 code.append(f"    public static final String[] LAYER_{i:03} = {{")
                 code.extend([f'        "{row}",' for row in layer])
                 code.append("    };\n")
 
             code.append("}")
+            output_file = self.output_dir / f"{class_name}.java"
+            output_file.write_text("\n".join(code), encoding="utf-8")
 
             # 写入到统一目录
             output_file = self.output_dir / f"{class_name}.java"
