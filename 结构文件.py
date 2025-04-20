@@ -6,11 +6,11 @@ from itertools import product
 # ----------------------
 # 配置区
 # ----------------------
-INPUT_FILE = "牛牛机.txt"
+INPUT_FILE = "Extradimensional.txt"
 OUTPUT_ROOT = "multiblock"  # 固定第一层目录
-PACKAGE_NAME = "org.qiuyeqaq.gtl_extend.common.multiblock.structure.Cattle_cattle_machine"
-LAYERS_PER_FILE = 20
-CLASS_PREFIX = "Cattle_cattle_machine"
+PACKAGE_NAME = "org.qiuyeqaq.gtlcore_ceu.common.data.machines.MultiblockStructure"
+LAYERS_PER_FILE = 100
+CLASS_PREFIX = "Extradimensional"
 BASE_STRUCTURE = "FactoryAPI.shape()"
 
 # 从输入文件名获取结构名称
@@ -20,14 +20,14 @@ SPECIAL_CHARS = {
     '~': {
         'condition': "Predicates.controller(blocks(definition.getBlock('{}'))",
         'keywords': [# 新增通用识别关键词
-            'gtl_extend:cattle_cattle_machine'
+            'gtceu:dimensionally_transcendent_dirt_forge'
         ]
     }
 }
 COMPLEX_CONDITIONS = {
     "A": {
         "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",
-        "keywords": ["gtceu:high_power_casing"],
+        "keywords": ["minecraft:sandstone"],
         "chain": [  # 移除.setMinGlobalLimited(10)
             {
                 "or": [
