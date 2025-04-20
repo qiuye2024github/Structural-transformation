@@ -245,6 +245,33 @@ class SchematicConverter:
 
     def generate_pattern_code_snippet(self):
         """生成匹配条件代码（去重并修复格式）"""
+        pattern_code = [
+            f"public static final MultiblockShape PATTERN = {BASE_STRUCTURE}"
+        ]
+
+        # 生成aisle链式调用（每行8个）
+        layer_chunks = []
+        current_line = []
+        for layer_idx in range(len(self.layers)):
+            part_num = (layer_idx) // LAYERS_PER_FILE + 1
+            layer_in_part = (layer_idx) % LAYERS_PER_FILE + 1
+            class_name = f"{CLASS_PREFIX}_Part{part_num}"
+            layer_ref = f"{class_name}.LAYER_{layer_in_part:03}"
+
+            current_line.append(f".aisle({layer_ref})")
+
+            # 每8个换行
+            if len(current_line) == 8:
+                layer_chunks.append("    " + "\n    ".join(current_line))
+                current_line = []
+
+        if current_line:
+            layer_chunks.append("    " + "\n    ".join(current_line))
+
+        # 添加缩进并连接
+        pattern_code.append("\n    ".join(layer_chunks))
+
+        # 添加where条件（原有逻辑不变）
         unique_chars = set()
         for layer in self.layers:
             for row in layer:
@@ -285,13 +312,8 @@ class SchematicConverter:
                     where_lines.append(f".where('{char}', {condition})")
                     processed_chars.add(char)
 
-        # 生成最终代码（按正确顺序排列）
-        pattern_code = [
-            f"public static final MultiblockShape PATTERN = {BASE_STRUCTURE}",
-            *["    .aisle(\"{}\")".format(row) for layer in self.layers for row in layer],
-            *where_lines,  # 直接插入已排序的条件
-            "    .build();"
-        ]
+        pattern_code.extend(where_lines)
+        pattern_code.append("    .build();")
 
         output_file = self.output_dir / "PatternConditions.java"
         output_file.write_text("\n".join(pattern_code), encoding="utf-8")
