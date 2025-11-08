@@ -5,37 +5,30 @@ import nbtlib
 # ----------------------
 # 配置区
 # ----------------------
-INPUT_FILE = "通能炉.schem"  # 改为.schem文件
-OUTPUT_ROOT = "multiblock"  # 固定第一层目录
-PACKAGE_NAME = "cn.qiuye.gtl_extend.common.data.machines.MultiBlock"
-LAYERS_PER_FILE = 100
-CLASS_PREFIX = "SuperfluidGeneralEnergyFurnace"
-BASE_STRUCTURE = "FactoryBlockPattern.start()"
+# 默认配置值
+DEFAULT_INPUT_FILE = "通能炉.schem"
+DEFAULT_OUTPUT_ROOT = "multiblock"
+DEFAULT_PACKAGE_NAME = "cn.qiuye.gtl_extend.common.data.machines.MultiBlock"
+DEFAULT_LAYERS_PER_FILE = 100
+DEFAULT_CLASS_PREFIX = "SuperfluidGeneralEnergyFurnace"
+DEFAULT_BASE_STRUCTURE = "FactoryBlockPattern.start()"
 
-# 从输入文件名获取结构名称
-STRUCTURE_DIR = Path(INPUT_FILE).stem
-
-# 定义可用单符号（移除了指定的特殊字符）
-CHAR_CATEGORIES = [
-    list(string.ascii_uppercase),  # 第一优先级：大写字母
-    list(string.ascii_lowercase),  # 第二优先级：小写字母
-    list(string.digits),  # 第三优先级：数字
-    ['!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=']  # 最后：特殊符号
-]
-
-SPECIAL_CHARS = {
+# 默认特殊字符配置
+DEFAULT_SPECIAL_CHARS = {
     '~': {
-        'condition': "Predicates.controller(blocks(definition.getBlock()))",  # 修复：添加缺失的右括号
-        'keywords': [  # 新增通用识别关键词
+        'condition': "Predicates.controller(blocks(definition.getBlock()))",
+        'keywords': [
             'gtl_extend:superfluid_general_energy_furnace'
         ]
     }
 }
-COMPLEX_CONDITIONS = {
+
+# 默认复杂条件配置
+DEFAULT_COMPLEX_CONDITIONS = {
     "A": {
-        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",  # 修复：添加缺失的右括号
+        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",
         "keywords": ["gtceu:high_temperature_smelting_casing"],
-        "chain": [  # 移除.setMinGlobalLimited(10)
+        "chain": [
             {
                 "or": [
                     "Predicates.abilities(PartAbility.EXPORT_ITEMS).setPreviewCount(1)",
@@ -50,13 +43,85 @@ COMPLEX_CONDITIONS = {
     }
 }
 
+# 定义可用单符号（移除了指定的特殊字符）
+CHAR_CATEGORIES = [
+    list(string.ascii_uppercase),  # 第一优先级：大写字母
+    list(string.ascii_lowercase),  # 第二优先级：小写字母
+    list(string.digits),  # 第三优先级：数字
+    ['!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=']  # 最后：特殊符号
+]
+
+
+# ----------------------
+# 用户输入函数
+# ----------------------
+def get_user_input():
+    """获取用户输入的配置"""
+    print("=== 结构转换器配置 ===")
+
+    # 获取输入文件
+    input_file = input(f"输入schematic文件路径 (默认: {DEFAULT_INPUT_FILE}): ").strip()
+    input_file_path = input_file if input_file else DEFAULT_INPUT_FILE
+
+    # 获取包名
+    package_name = input(f"输入Java包名 (默认: {DEFAULT_PACKAGE_NAME}): ").strip()
+    package_name_path = package_name if package_name else DEFAULT_PACKAGE_NAME
+
+    # 获取类前缀
+    class_prefix = input(f"输入类名前缀 (默认: {DEFAULT_CLASS_PREFIX}): ").strip()
+    class_prefix_path = class_prefix if class_prefix else DEFAULT_CLASS_PREFIX
+
+    # 获取特殊字符配置
+    print("\n--- 特殊字符配置 ---")
+    special_chars_path = {}
+    for char, config in DEFAULT_SPECIAL_CHARS.items():
+        print(f"字符 '{char}': {config['keywords']}")
+        keywords_input = input(f"输入新的关键词(逗号分隔，直接回车使用默认): ").strip()
+        if keywords_input:
+            new_keywords = [k.strip() for k in keywords_input.split(',')]
+            special_chars_path[char] = {
+                'condition': config['condition'],
+                'keywords': new_keywords
+            }
+            print(f"已更新: {new_keywords}")
+        else:
+            special_chars_path[char] = config
+            print("使用默认配置")
+
+    # 获取复杂条件配置
+    print("\n--- 复杂条件配置 ---")
+    complex_conditions_path = {}
+    for char, config in DEFAULT_COMPLEX_CONDITIONS.items():
+        print(f"字符 '{char}': {config['keywords']}")
+        keywords_input = input(f"输入新的关键词(逗号分隔，直接回车使用默认): ").strip()
+        if keywords_input:
+            new_keywords = [k.strip() for k in keywords_input.split(',')]
+            complex_conditions_path[char] = {
+                "condition": config["condition"],
+                "keywords": new_keywords,
+                "chain": config.get("chain", [])
+            }
+            print(f"已更新: {new_keywords}")
+        else:
+            complex_conditions_path[char] = config
+            print("使用默认配置")
+
+    return {
+        'INPUT_FILE': input_file_path,
+        'package_name': package_name_path,
+        'class_prefix': class_prefix_path,
+        'SPECIAL_CHARS': special_chars_path,
+        'complex_conditions': complex_conditions_path
+    }
+
 
 # ----------------------
 # 核心逻辑
 # ----------------------
 class SchematicConverter:
-    def __init__(self):
-        self.output_dir = Path(OUTPUT_ROOT) / STRUCTURE_DIR
+    def __init__(self, config):
+        self.config = config
+        self.output_dir = Path(DEFAULT_OUTPUT_ROOT) / Path(config['INPUT_FILE']).stem
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.palette = {}
         self.block_data = []
@@ -64,7 +129,7 @@ class SchematicConverter:
         self.length = 0
         self.height = 0
         self.auto_char_map = {}
-        self.used_chars = set(SPECIAL_CHARS.keys()) | set(COMPLEX_CONDITIONS.keys())
+        self.used_chars = set(config['SPECIAL_CHARS'].keys()) | set(config['COMPLEX_CONDITIONS'].keys())
         self.char_generator = self.create_char_generator()
         self.layers = []  # 显式初始化实例变量
 
@@ -121,7 +186,7 @@ class SchematicConverter:
 
             # 特殊字符匹配（基于配置的关键词）
             matched_special = False
-            for char, config in SPECIAL_CHARS.items():
+            for char, config in self.config['SPECIAL_CHARS'].items():
                 keywords = config.get('keywords', [])
                 for keyword in keywords:
                     if block_name.lower() == keyword.lower():
@@ -136,7 +201,7 @@ class SchematicConverter:
                 continue  # 继续处理下一个方块
 
             matched_complex = False
-            for char, config in COMPLEX_CONDITIONS.items():
+            for char, config in self.config['COMPLEX_CONDITIONS'].items():
                 keywords = config.get('keywords', [])
                 for keyword in keywords:
                     if keyword.lower() in block_name.lower():
@@ -242,15 +307,15 @@ class SchematicConverter:
 
     def generate_java_code(self, data):
         """生成Java结构类文件"""
-        total_files = (len(data) + LAYERS_PER_FILE - 1) // LAYERS_PER_FILE
+        total_files = (len(data) + DEFAULT_LAYERS_PER_FILE - 1) // DEFAULT_LAYERS_PER_FILE
         for file_num in range(total_files):
-            start = file_num * LAYERS_PER_FILE
-            end = min((file_num + 1) * LAYERS_PER_FILE, len(data))
+            start = file_num * DEFAULT_LAYERS_PER_FILE
+            end = min((file_num + 1) * DEFAULT_LAYERS_PER_FILE, len(data))
             file_layers = data[start:end]
 
-            class_name = f"{CLASS_PREFIX}_Part{file_num + 1}"
+            class_name = f"{self.config['CLASS_PREFIX']}_Part{file_num + 1}"
             code = [
-                f"package {PACKAGE_NAME}.{STRUCTURE_DIR};",
+                f"package {self.config['PACKAGE_NAME']}.{Path(self.config['INPUT_FILE']).stem};",
                 "",
                 f"public class {class_name} {{",
                 ""
@@ -271,10 +336,10 @@ class SchematicConverter:
 
     def generate_pattern_code_snippet(self):
         """生成主模式类文件（只包含aisle部分，返回Builder）"""
-        main_class_name = CLASS_PREFIX
+        main_class_name = self.config['CLASS_PREFIX']
 
         code = [
-            f"package {PACKAGE_NAME}.{STRUCTURE_DIR};",
+            f"package {self.config['PACKAGE_NAME']}.{Path(self.config['INPUT_FILE']).stem};",
             "",
             "import com.gregtechceu.gtceu.api.pattern.FactoryBlockPattern;",
             "",
@@ -283,15 +348,15 @@ class SchematicConverter:
             "    public static final FactoryBlockPattern.Builder PATTERN;",
             "",
             "    static {",
-            f"        PATTERN = {BASE_STRUCTURE}"
+            f"        PATTERN = {DEFAULT_BASE_STRUCTURE}"
         ]
 
         # 生成所有层的aisle调用
         total_layers = len(self.layers)
         for layer_idx in range(total_layers):
-            part_num = (layer_idx // LAYERS_PER_FILE) + 1
-            layer_in_part = (layer_idx % LAYERS_PER_FILE) + 1
-            class_name = f"{CLASS_PREFIX}_Part{part_num}"
+            part_num = (layer_idx // DEFAULT_LAYERS_PER_FILE) + 1
+            layer_in_part = (layer_idx % DEFAULT_LAYERS_PER_FILE) + 1
+            class_name = f"{self.config['CLASS_PREFIX']}_Part{part_num}"
             layer_ref = f"{class_name}.LAYER_{layer_in_part:03}"
             code.append(f"                .aisle({layer_ref})")
 
@@ -316,7 +381,7 @@ class SchematicConverter:
 
         processed_chars = set()
 
-        for char in sorted(unique_chars, key=lambda x: (x not in SPECIAL_CHARS, x)):
+        for char in sorted(unique_chars, key=lambda x: (x not in self.config['SPECIAL_CHARS'], x)):
             if char == ' ':  # 跳过空气方块
                 conditions_code.append(f"                .where(' ', Predicates.any())")
                 processed_chars.add(char)
@@ -326,16 +391,16 @@ class SchematicConverter:
             if char in processed_chars:
                 continue
 
-            if char in SPECIAL_CHARS:
+            if char in self.config['SPECIAL_CHARS']:
                 # 处理特殊字符（如~）
-                config = SPECIAL_CHARS[char]
+                config = self.config['SPECIAL_CHARS'][char]
                 # 修复：特殊字符条件不需要格式化
                 conditions_code.append(f"                .where('{char}', {config['condition']})")
                 processed_chars.add(char)
 
-            elif char in COMPLEX_CONDITIONS:
+            elif char in self.config['COMPLEX_CONDITIONS']:
                 # 处理复杂条件（如A）
-                config = COMPLEX_CONDITIONS[char]
+                config = self.config['COMPLEX_CONDITIONS'][char]
                 matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
                 if matched_blocks:
                     base_condition = config['condition'].format(matched_blocks[0])
@@ -363,7 +428,7 @@ class SchematicConverter:
         conditions_code.append("                .build();")
 
         # 保存条件文件
-        conditions_output_file = self.output_dir / f"{CLASS_PREFIX}_WhereConditions.txt"
+        conditions_output_file = self.output_dir / f"{self.config['CLASS_PREFIX']}_WhereConditions.txt"
         conditions_output_file.write_text("\n".join(conditions_code), encoding="utf-8")
         print(f"生成.where()条件和.build()文件: {conditions_output_file}")
 
@@ -388,9 +453,12 @@ class SchematicConverter:
 # ----------------------
 if __name__ == "__main__":
     try:
-        converter = SchematicConverter()
-        print(f"正在解析结构文件: {INPUT_FILE}")
-        converter.load_schematic(INPUT_FILE)
+        # 获取用户配置
+        user_config = get_user_input()
+
+        converter = SchematicConverter(user_config)
+        print(f"正在解析结构文件: {user_config['INPUT_FILE']}")
+        converter.load_schematic(user_config['INPUT_FILE'])
 
         print("生成层级数据...")
         layers_data = converter.generate_layers()  # 修复：避免与实例变量名冲突
@@ -402,7 +470,7 @@ if __name__ == "__main__":
         converter.generate_pattern_code_snippet()
 
         print("生成完成！文件输出至: {}".format(
-            Path(OUTPUT_ROOT) / STRUCTURE_DIR
+            Path(DEFAULT_OUTPUT_ROOT) / Path(user_config['INPUT_FILE']).stem
         ))
     except Exception as e:
         print(f"转换失败: {str(e)}")
