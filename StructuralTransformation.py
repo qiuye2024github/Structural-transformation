@@ -16,15 +16,18 @@ BASE_STRUCTURE = "FactoryBlockPattern.start()"
 STRUCTURE_DIR = Path(INPUT_FILE).stem
 
 # 定义可用单符号（移除了指定的特殊字符）
-AVAILABLE_SYMBOLS = [
-                        '~', '!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '='
-                    ] + list(string.ascii_uppercase)  # 添加大写字母
+CHAR_CATEGORIES = [
+    list(string.ascii_uppercase),  # 第一优先级：大写字母
+    list(string.ascii_lowercase),  # 第二优先级：小写字母
+    list(string.digits),           # 第三优先级：数字
+    ['!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=']  # 最后：特殊符号
+]
 
 SPECIAL_CHARS = {
     '~': {
         'condition': "Predicates.controller(blocks(definition.getBlock())",
         'keywords': [  # 新增通用识别关键词
-            'gtl_extend:black_hole_matter_decompressor'
+            'gtl_extend:superfluid_general_energy_furnace'
         ]
     }
 }
@@ -66,16 +69,15 @@ class SchematicConverter:
         self.layers = []  # 显式初始化实例变量
 
     def create_char_generator(self):
-        """字符生成序列（单符号，包括特殊字符）"""
-        # 优先使用特殊字符，然后是大写字母
-        for symbol in AVAILABLE_SYMBOLS:
-            if symbol not in self.used_chars:
-                yield symbol
+        """字符生成序列：按类别优先级分配字符"""
+        # 按优先级顺序遍历所有字符类别
+        for category in CHAR_CATEGORIES:
+            for symbol in category:
+                if symbol not in self.used_chars:
+                    yield symbol
 
-        # 如果还不够，使用小写字母（虽然不推荐，但作为备选）
-        for c in string.ascii_lowercase:
-            if c not in self.used_chars:
-                yield c
+        # 如果所有字符都不够用，抛出错误
+        raise ValueError("字符资源耗尽，请减少唯一方块种类")
 
     def load_schematic(self, file_path):
         """加载并解析.schem文件"""
@@ -123,7 +125,6 @@ class SchematicConverter:
                 keywords = config.get('keywords', [])
                 for keyword in keywords:
                     if block_name.lower() == keyword.lower():
-                        filled_condition = config['condition'].format(keyword)  # 使用实际关键字填充
                         self.palette[palette_id] = char
                         self.auto_char_map[block_name] = char
                         print(f"识别到特殊条件方块 {block_name} -> {char}")
