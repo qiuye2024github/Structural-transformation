@@ -19,13 +19,13 @@ STRUCTURE_DIR = Path(INPUT_FILE).stem
 CHAR_CATEGORIES = [
     list(string.ascii_uppercase),  # 第一优先级：大写字母
     list(string.ascii_lowercase),  # 第二优先级：小写字母
-    list(string.digits),           # 第三优先级：数字
+    list(string.digits),  # 第三优先级：数字
     ['!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=']  # 最后：特殊符号
 ]
 
 SPECIAL_CHARS = {
     '~': {
-        'condition': "Predicates.controller(blocks(definition.getBlock())",
+        'condition': "Predicates.controller(blocks(definition.getBlock()))",  # 修复：添加缺失的右括号
         'keywords': [  # 新增通用识别关键词
             'gtl_extend:superfluid_general_energy_furnace'
         ]
@@ -33,8 +33,8 @@ SPECIAL_CHARS = {
 }
 COMPLEX_CONDITIONS = {
     "A": {
-        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",
-        "keywords": ["kubejs:diamond_compressed_block"],
+        "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",  # 修复：添加缺失的右括号
+        "keywords": ["gtceu:high_temperature_smelting_casing"],
         "chain": [  # 移除.setMinGlobalLimited(10)
             {
                 "or": [
@@ -98,8 +98,8 @@ class SchematicConverter:
             # 解析方块数据
             self.decode_nbt_block_data(nbt_data['BlockData'])
 
-        except Exception as e:
-            raise ValueError(f"解析.schem文件失败: {str(e)}")
+        except Exception as err:
+            raise ValueError(f"解析.schem文件失败: {str(err)}")
 
     def parse_nbt_palette(self, palette_tag):
         """解析NBT调色板数据"""
@@ -160,8 +160,8 @@ class SchematicConverter:
                     self.auto_char_map[block_name] = new_char
                     self.used_chars.add(new_char)
                     print(f"自动分配 {block_name} -> {new_char}")
-                except StopIteration:
-                    raise ValueError("单符号资源耗尽，请减少唯一方块种类")
+                except StopIteration as stop_exception:
+                    raise ValueError("单符号资源耗尽，请减少唯一方块种类") from stop_exception
 
             # 更新palette映射
             assigned_char = self.auto_char_map[block_name]
@@ -170,8 +170,16 @@ class SchematicConverter:
 
     def _handle_air_block(self, palette_id):
         """特殊处理空气方块"""
-        self.palette[int(palette_id)] = ' '
+        # 修复：确保palette_id是整数，并正确处理所有类型的palette_id
+        try:
+            palette_id_int = int(palette_id)
+        except (ValueError, TypeError):
+            # 如果无法转换为整数，尝试其他方式处理
+            palette_id_int = palette_id
+
+        self.palette[palette_id_int] = ' '
         self.auto_char_map["minecraft:air"] = ' '
+        self.auto_char_map["air"] = ' '
         self.used_chars.add(' ')
 
     def decode_nbt_block_data(self, block_data_tag):
@@ -182,7 +190,16 @@ class SchematicConverter:
         if hasattr(block_data_tag, '__iter__'):
             # 直接迭代数组
             for block_id in block_data_tag:
+                # 确保block_id是palette字典中存在的键
                 if block_id not in self.palette:
+                    # 尝试转换为整数
+                    try:
+                        block_id_int = int(block_id)
+                        if block_id_int in self.palette:
+                            self.block_data.append(block_id_int)
+                            continue
+                    except (ValueError, TypeError):
+                        pass
                     raise ValueError(f"发现未映射的方块ID: {block_id}")
                 self.block_data.append(block_id)
         else:
@@ -202,7 +219,7 @@ class SchematicConverter:
 
         # Z轴从小到大遍历（每个Z对应一个LAYER）
         for z in range(self.length):
-            layer = []
+            layer_data = []  # 修复：避免与实例变量名冲突
 
             # Y轴从下到上（y=0为最下层）
             for y in range(self.height):
@@ -217,22 +234,23 @@ class SchematicConverter:
                         row.append(self.palette.get(block_id, '?'))
                     else:
                         row.append('?')  # 索引超出范围
-                layer.append("".join(row))
+                layer_data.append("".join(row))
 
-            self.layers.append(layer)
+            self.layers.append(layer_data)
 
         return self.layers  # 返回实例变量
 
-    def generate_java_code(self, layers):
-        total_files = (len(layers) + LAYERS_PER_FILE - 1) // LAYERS_PER_FILE
+    def generate_java_code(self, data):
+        """生成Java结构类文件"""
+        total_files = (len(data) + LAYERS_PER_FILE - 1) // LAYERS_PER_FILE
         for file_num in range(total_files):
             start = file_num * LAYERS_PER_FILE
-            end = min((file_num + 1) * LAYERS_PER_FILE, len(layers))
-            file_layers = layers[start:end]
+            end = min((file_num + 1) * LAYERS_PER_FILE, len(data))
+            file_layers = data[start:end]
 
             class_name = f"{CLASS_PREFIX}_Part{file_num + 1}"
             code = [
-                f"package {PACKAGE_NAME};",
+                f"package {PACKAGE_NAME}.{STRUCTURE_DIR};",
                 "",
                 f"public class {class_name} {{",
                 ""
@@ -252,51 +270,67 @@ class SchematicConverter:
             print(f"生成结构类文件: {output_file}")
 
     def generate_pattern_code_snippet(self):
-        """生成匹配条件代码（去重并修复格式）"""
-        pattern_code = [
-            f"public static final FactoryBlockPattern PATTERN = {BASE_STRUCTURE}"
+        """生成主模式类文件（只包含aisle部分，返回Builder）"""
+        main_class_name = CLASS_PREFIX
+
+        code = [
+            f"package {PACKAGE_NAME}.{STRUCTURE_DIR};",
+            "",
+            "import com.gregtechceu.gtceu.api.pattern.FactoryBlockPattern;",
+            "",
+            f"public class {main_class_name} {{",
+            "",
+            "    public static final FactoryBlockPattern.Builder PATTERN;",
+            "",
+            "    static {",
+            f"        PATTERN = {BASE_STRUCTURE}"
         ]
 
-        # 生成aisle链式调用（每行8个）
-        layer_chunks = []
-        current_line = []
-        for layer_idx in range(len(self.layers)):
-            part_num = layer_idx // LAYERS_PER_FILE + 1
-            layer_in_part = layer_idx % LAYERS_PER_FILE + 1  # 这里应该从1开始
+        # 生成所有层的aisle调用
+        total_layers = len(self.layers)
+        for layer_idx in range(total_layers):
+            part_num = (layer_idx // LAYERS_PER_FILE) + 1
+            layer_in_part = (layer_idx % LAYERS_PER_FILE) + 1
             class_name = f"{CLASS_PREFIX}_Part{part_num}"
             layer_ref = f"{class_name}.LAYER_{layer_in_part:03}"
+            code.append(f"                .aisle({layer_ref})")
 
-            current_line.append(f".aisle({layer_ref})")
+        code.append("    }")
+        code.append("}")
 
-            # 每8个换行
-            if len(current_line) == 8:
-                layer_chunks.append("    " + "\n    ".join(current_line))
-                current_line = []
+        output_file = self.output_dir / f"{main_class_name}.java"
+        output_file.write_text("\n".join(code), encoding="utf-8")
+        print(f"生成主模式类文件: {output_file}")
 
-        if current_line:
-            layer_chunks.append("    " + "\n    ".join(current_line))
+        # 单独生成.where()条件和.build()用于手动粘贴
+        self.generate_conditions_for_manual_paste()
 
-        # 添加缩进并连接
-        pattern_code.append("\n    ".join(layer_chunks))
+    def generate_conditions_for_manual_paste(self):
+        """生成单独的.where()条件和.build()，用于手动粘贴到机器类"""
+        conditions_code = []
 
-        # 添加where条件（原有逻辑不变）
         unique_chars = set()
         for layer in self.layers:
             for row in layer:
                 unique_chars.update(row)
 
-        where_lines = []
-        processed_chars = set()  # 记录已处理的字符
+        processed_chars = set()
 
         for char in sorted(unique_chars, key=lambda x: (x not in SPECIAL_CHARS, x)):
+            if char == ' ':  # 跳过空气方块
+                conditions_code.append(f"                .where(' ', Predicates.any())")
+                processed_chars.add(char)
+                continue
+
+            # 跳过已处理的字符
             if char in processed_chars:
-                continue  # 避免重复处理
+                continue
 
             if char in SPECIAL_CHARS:
                 # 处理特殊字符（如~）
                 config = SPECIAL_CHARS[char]
-                filled_condition = config['condition'].format(config['keywords'][0])
-                where_lines.append(f".where('{char}', {filled_condition})")
+                # 修复：特殊字符条件不需要格式化
+                conditions_code.append(f"                .where('{char}', {config['condition']})")
                 processed_chars.add(char)
 
             elif char in COMPLEX_CONDITIONS:
@@ -305,27 +339,33 @@ class SchematicConverter:
                 matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
                 if matched_blocks:
                     base_condition = config['condition'].format(matched_blocks[0])
-                    complex_condition = self._build_complex_condition(char, {
-                        "condition": base_condition,
-                        "chain": config['chain']
-                    })
-                    where_lines.append(f".where('{char}', {complex_condition})")
+
+                    # 构建复杂条件链
+                    condition_lines = [base_condition]
+                    for chain_item in config.get('chain', []):
+                        if 'or' in chain_item:
+                            for or_condition in chain_item['or']:
+                                condition_lines.append(f"                    .or({or_condition})")
+
+                    complex_condition = "\n".join(condition_lines)
+                    conditions_code.append(f"                .where('{char}', {complex_condition})")
                     processed_chars.add(char)
 
             else:
-                # 处理普通字符（如特殊符号或字母）
+                # 处理普通字符
                 matched_blocks = [k for k, v in self.auto_char_map.items() if v == char]
                 if matched_blocks:
                     condition = f"Predicates.blocks(GetRegistries.getBlock('{matched_blocks[0]}'))"
-                    where_lines.append(f".where('{char}', {condition})")
+                    conditions_code.append(f"                .where('{char}', {condition})")
                     processed_chars.add(char)
 
-        pattern_code.extend(where_lines)
-        pattern_code.append("    .build();")
+        # 添加.build()
+        conditions_code.append("                .build();")
 
-        output_file = self.output_dir / "PatternConditions.java"
-        output_file.write_text("\n".join(pattern_code), encoding="utf-8")
-        print(f"生成匹配条件: {output_file}")
+        # 保存条件文件
+        conditions_output_file = self.output_dir / f"{CLASS_PREFIX}_WhereConditions.txt"
+        conditions_output_file.write_text("\n".join(conditions_code), encoding="utf-8")
+        print(f"生成.where()条件和.build()文件: {conditions_output_file}")
 
     def _build_complex_condition(self, char, config, indent=4):
         """修复链式条件缩进"""
@@ -353,13 +393,13 @@ if __name__ == "__main__":
         converter.load_schematic(INPUT_FILE)
 
         print("生成层级数据...")
-        converter.generate_layers()  # 必须调用以初始化self.layers
+        layers_data = converter.generate_layers()  # 修复：避免与实例变量名冲突
 
         print("生成Java结构类...")
-        converter.generate_java_code(converter.layers)
+        converter.generate_java_code(layers_data)
 
-        print("生成匹配条件代码...")
-        converter.generate_pattern_code_snippet()  # 移除参数
+        print("生成主模式类和条件文件...")
+        converter.generate_pattern_code_snippet()
 
         print("生成完成！文件输出至: {}".format(
             Path(OUTPUT_ROOT) / STRUCTURE_DIR
