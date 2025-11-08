@@ -9,7 +9,7 @@ INPUT_FILE = "通能炉.schem"  # 改为.schem文件
 OUTPUT_ROOT = "multiblock"  # 固定第一层目录
 PACKAGE_NAME = "cn.qiuye.gtl_extend.common.data.machines.MultiBlock"
 LAYERS_PER_FILE = 100
-CLASS_PREFIX = "BlackHoleMatterDecompressorMultiBlockStructure"
+CLASS_PREFIX = "SuperfluidGeneralEnergyFurnace"
 BASE_STRUCTURE = "FactoryBlockPattern.start()"
 
 # 从输入文件名获取结构名称
