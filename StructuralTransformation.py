@@ -6,11 +6,11 @@ import nbtlib
 # 配置区
 # ----------------------
 # 默认配置值
-DEFAULT_INPUT_FILE = "1.schem"
+DEFAULT_INPUT_FILE = "PlanetaryEngine.schem"
 DEFAULT_OUTPUT_ROOT = "multiblock"
-DEFAULT_PACKAGE_NAME = "cn.qiuye.gtl_extend.common.data.machines.MultiBlock"
+DEFAULT_PACKAGE_NAME = "cn.qiuye.gtmoremachine.common.data.machines.multiblock"
 DEFAULT_LAYERS_PER_FILE = 100
-DEFAULT_CLASS_PREFIX = "SteamOP"
+DEFAULT_CLASS_PREFIX = "PlanetaryEngine"
 DEFAULT_BASE_STRUCTURE = "FactoryBlockPattern.start()"
 
 # 默认特殊字符配置
@@ -27,7 +27,7 @@ DEFAULT_SPECIAL_CHARS = {
 DEFAULT_COMPLEX_CONDITIONS = {
     "A": {
         "condition": "Predicates.blocks(GetRegistries.getBlock('{}'))",
-        "keywords": ["gtceu:cyan_wool"],
+        "keywords": ["minecraft:prismarine"],
         "chain": [
             {
                 "or": [

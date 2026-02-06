@@ -81,7 +81,7 @@ def remove_block_states_from_schem(input_file, output_file=None):
         nbt_file['Palette'] = new_palette
 
         # 使用上下文管理器自动保存
-        with nbt_file as file_obj:
+        with nbt_file:
             # 在上下文管理器中使用文件对象
             pass
 
